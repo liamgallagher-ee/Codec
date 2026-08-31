@@ -24,11 +24,15 @@
 #include "i2c.h"
 #include "sai.h"
 #include "gpio.h"
+#include "stm32g4xx_hal_def.h"
+#include "stm32g4xx_hal_i2c.h"
 #include "stm32g4xx_hal_sai.h"
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "tlv320.c"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,8 +45,11 @@
 #define AUDIO_BLOCK_SIZE 64 //64 stereo samples per block
 #define BUFFER_SIZE (AUDIO_BLOCK_SIZE * 2 * 2) // 2 channels * 2 (two halves) * block size
 
-uint16_t audio_rx_buffer(BUFFER_SIZE) // DMA target recieve array
-uint16_t audio_tx_buffer(BUFFER_SIZE) // DMA target send array
+uint16_t audio_rx_buffer[BUFFER_SIZE]; // DMA target recieve array
+uint16_t audio_tx_buffer[BUFFER_SIZE]; // DMA target send array
+
+#define CODEC_ADD 0x30  //I2C address of codec
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,8 +64,8 @@ uint16_t audio_tx_buffer(BUFFER_SIZE) // DMA target send array
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void SystemClock_Config(void);
 
 /* USER CODE END PFP */
 
@@ -102,15 +109,20 @@ int main(void)
   MX_SAI1_Init();
   MX_CORDIC_Init();
   /* USER CODE BEGIN 2 */
+
+  //configure I2C of Codec
+  TLV320_Program(&hi2c2, CODEC_ADD<<1, tlv320_init_cmds, sizeof(tlv320_init_cmds)/sizeof(tlv320_init_cmds[0]), 100);
+
   //audio DMA stream setup
   //ensure buffer is 0 to prevent pops and clicks
   memset(audio_tx_buffer,0,BUFFER_SIZE);
 
   //start reciever DMA(SAI1_A), will idle waiting for master
-  HAL_SAI_Recieve_DMA(&hsai_BlockA1, (uint8_t*)audio_rx_buffer, uint16_t BUFFER_SIZE);
+  HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t*)audio_rx_buffer,  BUFFER_SIZE);
 
   //start transmitter(SAI1_B), will launch both simultaneously
-  HAL_SAI_Transmit_DMA(&hsai_BlockB1, (uint8_t*)audio_tx_buffer, uint16_t BUFFER_SIZE);
+  HAL_SAI_Transmit_DMA(&hsai_BlockB1, (uint8_t*)audio_tx_buffer, BUFFER_SIZE);
+
 
   /* USER CODE END 2 */
 
@@ -121,7 +133,7 @@ int main(void)
     /* USER CODE END WHILE */
     
     /* USER CODE BEGIN 3 */
-    
+  }  
   /* USER CODE END 3 */
 }
 
@@ -173,13 +185,15 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+
 //when DMA fills first half of the RX buffer
 void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai)
 {
   //make sure callback is from reciever
   if(hsai->Instance == SAI1_Block_A)
   {
-    uint16_t block_bytes = (AUDIO_BLOCK_SIZE*2)*sizeof(uint32_t);
+    uint16_t block_bytes = (AUDIO_BLOCK_SIZE*2)*sizeof(uint16_t);
 
     //audio pass through
     memcpy(&audio_tx_buffer,&audio_rx_buffer,block_bytes);
@@ -193,8 +207,8 @@ void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai)
 {
   if(hsai->Instance == SAI1_Block_A)
   {
-    uint16_t block_bytes = (AUDIO_BLOCK_SIZE*2)*sizeof(uint32_t);
-    uint16_t offset = AUDIO_BLOCK_SIZE*2;
+    uint16_t block_bytes = (AUDIO_BLOCK_SIZE*2)*sizeof(uint16_t);
+    uint16_t offset = AUDIO_BLOCK_SIZE/2; //offset to second half of buffer
 
     //audio passthrough
     memcpy(&audio_tx_buffer[offset],&audio_rx_buffer[offset],block_bytes);
